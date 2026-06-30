@@ -3,6 +3,7 @@ import { FlashcardSession } from "./components/FlashcardSession";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { countByMastery, getReviewPoolWords, markWordMastered, markWordNotMastered, pickSessionWords } from "./logic/sessionLogic";
 import { loadWordsFromCsv } from "./logic/csvWordLoader";
+import { trackEvent, trackPageView } from "./logic/analytics";
 
 const BUILTIN_DATASETS = [
   {
@@ -220,6 +221,12 @@ export default function App() {
     if (UI_THEMES.some((theme) => theme.value === uiTheme)) return;
     setUiTheme("classic");
   }, [uiTheme, setUiTheme]);
+
+  useEffect(() => {
+    const basePath = window.location.pathname || "/";
+    const pagePath = view === "dashboard" ? basePath : `${basePath}?view=${view}`;
+    trackPageView(pagePath);
+  }, [view]);
 
   const datasetOptions = useMemo(() => {
     const uploaded = customSets.map((set) => ({
@@ -453,7 +460,19 @@ export default function App() {
   }
 
   function handleFinishSession() {
+    const finalStats = buildSessionStats(sessionDecisions, sessionWords.length);
+
+    trackEvent("session_finished", {
+      words_total: finalStats.total,
+      words_reviewed: finalStats.reviewed,
+      words_mastered: finalStats.mastered,
+      words_not_mastered: finalStats.notMastered,
+      dataset: selectedSet,
+      review_pool: reviewPool,
+    });
+
     applySessionDecisions(sessionDecisions);
+    setSessionStats(finalStats);
     setShowSessionComplete(true);
     setView("summary");
   }
@@ -537,6 +556,11 @@ export default function App() {
     anchor.remove();
     URL.revokeObjectURL(url);
 
+    trackEvent("progress_downloaded", {
+      dataset: selectedSet,
+      custom_set_count: customSets.length,
+    });
+
     setError("");
     setMessage("Progress backup file downloaded.");
   }
@@ -583,8 +607,17 @@ export default function App() {
         setReviewPool(data.reviewPool);
       }
 
+      trackEvent("progress_imported", {
+        import_status: "success",
+        imported_custom_set_count: Array.isArray(data.customSets) ? data.customSets.length : 0,
+      });
+
       setMessage("Progress imported successfully. Your local progress has been updated from this file.");
     } catch (_error) {
+      trackEvent("progress_imported", {
+        import_status: "failed",
+      });
+
       setError("Could not import progress. Please upload a valid JSON progress file.");
     } finally {
       event.target.value = "";
